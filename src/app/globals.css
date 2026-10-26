@@ -1,0 +1,119 @@
+/*
+ * The palette, for inline styles. antd components take theirs from the tokens
+ * in providers.tsx; keep the two matched. The same values as the
+ * application's and the calendar's, so the suite reads as one product.
+ */
+:root {
+  --tw-accent: #4f46e5;
+  --tw-accent-soft: #eef0ff;
+  --tw-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --tw-ink: #0f172a;
+  --tw-text: #334155;
+  --tw-muted: #64748b;
+  --tw-faint: #94a3b8;
+  --tw-line: #edf0f5;
+  --tw-line-strong: #e2e8f0;
+  --tw-page: #f5f7fb;
+  --tw-in: #16a34a;
+  --tw-out: #dc2626;
+  --tw-fee: #d97706;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--tw-ink);
+  background: var(--tw-page);
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.22);
+}
+
+/* Figures line up in columns, digit under digit. */
+.tw-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tw-in {
+  color: var(--tw-in);
+}
+
+.tw-out {
+  color: var(--tw-out);
+}
+
+.tw-fee {
+  color: var(--tw-fee);
+}
+
+.tw-zero {
+  color: var(--tw-faint);
+}
+
+/* A member row in the summary is a filter for the transactions below it. */
+.tw-row-active > td {
+  background: var(--tw-accent-soft) !important;
+}
+
+.tw-table-total td {
+  font-weight: 600;
+  background: #f8fafc !important;
+}
+
+/* The page tabs in the bar. */
+.tw-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: var(--tw-muted);
+  font-weight: 500;
+  font-size: 14px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tw-tab:hover {
+  background: #f1f5f9;
+  color: var(--tw-ink);
+}
+
+.tw-tab-active,
+.tw-tab-active:hover {
+  background: var(--tw-accent-soft);
+  color: var(--tw-accent);
+}
+
+@media (max-width: 640px) {
+  .tw-hide-narrow {
+    display: none !important;
+  }
+  .tw-tab {
+    padding: 0 10px;
+  }
+}
+
+/* Three tabs, the account and sign-out don't fit a phone side by side:
+   below this the inactive tabs are icons only (each Link keeps its
+   aria-label), and the one you're on keeps its name. */
+@media (max-width: 560px) {
+  .tw-tab:not(.tw-tab-active) .tw-tab-label {
+    display: none;
+  }
+}
