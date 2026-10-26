@@ -220,6 +220,13 @@ begin
 exception
   when insufficient_privilege then raise notice 'PASS: signed out, nothing runs';
 end $$;
+do $$
+begin
+  perform 1 from member;
+  raise exception 'FAIL: anon read the member table';
+exception
+  when insufficient_privilege then raise notice 'PASS: signed out, no table is readable';
+end $$;
 reset role;
 
 \echo ''

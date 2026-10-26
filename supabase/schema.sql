@@ -494,10 +494,33 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Grants
 --
--- Supabase grants EXECUTE on new functions to anon by name; nobody signed out
--- has any business here, so each is revoked from anon and public explicitly.
--- finance_make_admin() is for the SQL editor only: no API role may call it.
+-- Tables: what each API role may attempt; the policies above decide what it
+-- gets. Granted here by name rather than left to Supabase's defaults, which a
+-- project can turn off (Data API → "automatically expose new tables"), and
+-- an app with no table privileges fails with "permission denied" before a
+-- policy is ever asked. Signed-in people go through RLS; the service role is
+-- the Members page's; nobody signed out gets anything.
+--
+-- Functions: Supabase grants EXECUTE on new functions to anon by name;
+-- nobody signed out has any business here, so each is revoked from anon and
+-- public explicitly. finance_make_admin() is for the SQL editor only: no API
+-- role may call it.
 -- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    grant usage on schema public to authenticated;
+    grant select, insert, update, delete on member, finance_transaction, finance_share to authenticated;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant usage on schema public to service_role;
+    grant select, insert, update, delete on member, finance_transaction, finance_share to service_role;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on member, finance_transaction, finance_share from anon;
+  end if;
+end $$;
 
 do $$
 declare

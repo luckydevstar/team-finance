@@ -25,16 +25,10 @@ psql -q -v ON_ERROR_STOP=1 -f "$ROOT/supabase/schema.sql"
 echo "→ applying schema (second pass — must be idempotent)"
 psql -q -v ON_ERROR_STOP=1 -f "$ROOT/supabase/schema.sql"
 
-# Granted after the schema exists, the way Supabase grants them to its own
-# roles — RLS is never reached without table privileges.
-#
-# Functions are not granted here: stub.sql sets Supabase's default privileges,
-# so each one arrives with EXECUTE for anon and authenticated by name, and the
-# schema's own revokes decide the rest. A blanket grant at this point would
-# undo them and the anon checks would be testing this script, not the schema.
-psql -q -v ON_ERROR_STOP=1 -c "
-  grant all on all tables in schema public to authenticated;
-  grant select on all tables in schema public to anon;"
+# No grants here: the schema grants table privileges itself, by name, and
+# stub.sql sets Supabase's default privileges for functions, so what the
+# assertions see is what the schema sets up — a grant from this script would
+# be testing the script instead.
 
 echo "→ running assertions"
 # Captured rather than streamed, because the exit status is not the whole

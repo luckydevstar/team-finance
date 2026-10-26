@@ -53,32 +53,19 @@ shares for an admin and only the caller's for a member.
 
 ## Setting it up
 
-You need a Supabase project and somewhere to run Next.js (Vercel works).
+**[SETUP.md](SETUP.md) has the full step-by-step guide**, from creating the
+Supabase project to adding your team, with troubleshooting. In short:
 
-1. **Create a Supabase project.**
-2. **Run the schema.** Open the SQL editor, paste all of
-   `supabase/schema.sql` and run it. It's safe to run again after an update.
-3. **Turn off sign-ups.** In Authentication → Sign In / Providers, turn off
-   **Allow new users to sign up**. Only admins add people.
-4. **Create the first admin.**
-   1. In Authentication → Users, choose **Add user → Create new user**.
-      Enter your email and a password, and tick **Auto Confirm User**.
-   2. Back in the SQL editor, run:
-
-      ```sql
-      select finance_make_admin('you@example.com', 'Your Name');
-      ```
-5. **Configure the app.** Copy `.env.example` to `.env.local` and fill in the
-   values from Project settings → API keys:
-   - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-   - `SUPABASE_SERVICE_ROLE_KEY`. The Members page uses it to create
-     sign-ins and set passwords. It stays on the server and is never sent to
-     a browser.
-   - Optionally, `NEXT_PUBLIC_TIME_ZONE`, which decides which day "today" is
-     (default `America/New_York`).
-6. **Run it.** `npm ci`, then `npm run dev` (port 3200), and sign in. To
-   deploy on Vercel, import the repository and set the same variables.
-7. **Add your team** on the Members page.
+1. Create a Supabase project and run `supabase/schema.sql` in its SQL
+   editor.
+2. Turn off public sign-up (Authentication → Sign In / Providers).
+3. Add your own user (Authentication → Users, with **Auto Confirm User**
+   ticked), then run
+   `select finance_make_admin('you@example.com', 'Your Name');`.
+4. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and
+   `SUPABASE_SERVICE_ROLE_KEY` (see `.env.example`), locally in
+   `.env.local` or on Vercel, and deploy.
+5. Add your team on the **Members** page.
 
 ## Checks
 
