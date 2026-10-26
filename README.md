@@ -67,6 +67,11 @@ Supabase project to adding your team, with troubleshooting. In short:
    `.env.local` or on Vercel, and deploy.
 5. Add your team on the **Members** page.
 
+Moving from the old finance system? `npm run import:legacy` writes a SQL
+file that loads a team's history, with every balance checked against the
+old system. See
+[SETUP.md](SETUP.md#importing-history-from-the-old-finance-system).
+
 ## Checks
 
 ```bash

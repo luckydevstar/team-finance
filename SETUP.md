@@ -22,7 +22,8 @@ Contents:
 9. [Add your team](#8-add-your-team)
 10. [Start recording](#9-start-recording)
 
-After setup: [Updating](#updating-to-a-new-version) ·
+After setup: [Importing old history](#importing-history-from-the-old-finance-system) ·
+[Updating](#updating-to-a-new-version) ·
 [Customising](#customising) · [Backups](#backups) ·
 [Troubleshooting](#troubleshooting) · [Security](#security-checklist)
 
@@ -305,6 +306,69 @@ People are never deleted from the app, so history always stays readable.
   totals by month, and each member's totals before and after base fees.
 - **Transactions.** Shows one month's transactions with its in, out and net,
   filterable by type, member and text.
+
+---
+
+## Importing history from the old finance system
+
+If the team kept its money in the old finance system, you can bring its
+history over. Each person's balance comes out exactly as the old system
+showed it. You run a script on your computer that writes a SQL file, then
+you run that file in the team's Supabase SQL editor. The script never
+connects to a database itself.
+
+**You need:** the old system's `database` folder (with `finance/`,
+`users.json` and `finance-admin-initials.json` inside), Node.js, and this
+repository with `npm ci` done (step 6).
+
+1. **Create everyone's sign-in first** in the team's project: the admin
+   with step 4, everyone else on the Members page (step 8). The import
+   finds people by email and takes their names from there.
+2. **Write the SQL.** List each person once, as their old username (or old
+   user number) and the email they sign in with now:
+
+   ```bash
+   npm run import:legacy -- --data ../database --out imports/myteam.sql \
+     --member JCG=admin@example.com \
+     --member PSR=psr@example.com \
+     --member SGS=sgs@example.com \
+     --member KCS=kch@example.com
+   ```
+
+   It prints how many records it found and each person's balance. Those
+   balances are checked against the old system, and the script stops if
+   any differs.
+3. **Run it.** Open `imports/myteam.sql`, copy all of it into the team's
+   **SQL Editor** and click **Run**. The last result lists each person's
+   balance after base fees. It should match the figures at the top of the
+   file.
+
+What comes over:
+
+- **Records involving the listed people.** If a cost was shared with
+  someone not on the list, only the listed people's parts come over. The
+  reason keeps the original total, e.g. "IPRoyal (their part of $233.80
+  split 14 ways)". Records involving only other people are left out.
+- **"Net Fee" records** become base fees.
+- **Each person's starting value** in the old system becomes an "Initial
+  balance" transaction, dated the day before the history begins.
+- **Left out:** deleted records and records of $0.
+- **"Recorded by"** shows the person's current name if they're on the
+  list; otherwise their old username.
+- **Months:** the old system's months ran from the 18th to the 17th. Team
+  Finance's run from the 20th to the 19th, so a record dated the 18th or
+  19th lands in the next month here. Totals are unchanged.
+
+**Running it again is safe.** Each record keeps the same id every time, so
+a second run replaces the first import instead of doubling it. Anything
+recorded by hand in the app is left alone.
+
+**Already recording in the app?** Add `--until 2026-10-19` (or whichever
+day the old system stops counting) so records you've already entered by
+hand aren't imported twice.
+
+The `imports/` folder is ignored by git, because it holds the team's real
+figures. Keep the SQL file private, and delete it once it's run.
 
 ---
 
