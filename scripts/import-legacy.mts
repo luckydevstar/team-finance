@@ -1,15 +1,19 @@
 /**
- * Turns the old finance system's records into a SQL file that loads one
- * team's history into Team Finance. It reads the old files and writes SQL;
- * it touches no database itself. You run the SQL in the team's Supabase SQL
- * editor (see SETUP.md, "Importing history from the old finance system").
+ * Loads one team's history from the old finance system into Team Finance:
+ * either as a SQL file you run in the team's Supabase SQL editor (--out), or
+ * straight into the database with the keys in .env / .env.local (--apply).
+ * See SETUP.md, "Importing history from the old finance system".
  *
  *   npm run import:legacy -- --data ../database --out imports/team.sql \
- *     --member JCG=admin@example.com --member PSR=psr@example.com
+ *     --member JCG=jcg@example.com --member PSR=psr@example.com
+ *   npm run import:legacy -- --data ../database --apply \
+ *     --member JCG=jcg@example.com --member PSR=psr@example.com
  *
  *   --data    the old system's `database` folder (finance/, users.json,
  *             finance-admin-initials.json)
  *   --out     where to write the SQL
+ *   --apply   write to the database directly, with NEXT_PUBLIC_SUPABASE_URL
+ *             and SUPABASE_SERVICE_ROLE_KEY from .env.local or .env
  *   --member  OLD=email, once per person: OLD is their old username or
  *             number (1022), email is their Team Finance sign-in
  *   --until   optional, YYYY-MM-DD: leave out records after this day (for
@@ -28,10 +32,10 @@
  *     everyone's final balance equals the old system's, to the cent.
  *
  * Every transaction gets an id derived from the old record's id, so running
- * the SQL again replaces its own earlier import instead of doubling it.
+ * either again replaces its own earlier import instead of doubling it.
  */
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // BigInt constants, not literals: the project compiles for ES2017.
@@ -54,9 +58,13 @@ type OldUser = { index: number; username: string };
 // ---------------------------------------------------------------- arguments
 
 function parseArgs(argv: string[]) {
-  const out = { data: "", out: "", until: "", members: [] as Array<{ key: string; email: string }> };
+  const out = { data: "", out: "", until: "", apply: false, members: [] as Array<{ key: string; email: string }> };
   for (let i = 0; i < argv.length; i++) {
     const [flag, value] = [argv[i], argv[i + 1]];
+    if (flag === "--apply") {
+      out.apply = true;
+      continue;
+    }
     if (flag === "--data") out.data = value;
     else if (flag === "--out") out.out = value;
     else if (flag === "--until") out.until = value;
@@ -67,8 +75,8 @@ function parseArgs(argv: string[]) {
     } else fail(`Unknown option ${flag}`);
     i++;
   }
-  if (!out.data || !out.out || !out.members.length) {
-    fail("Usage: npm run import:legacy -- --data <old database folder> --out <file.sql> --member OLD=email [--member …] [--until YYYY-MM-DD]");
+  if (!out.data || !(out.out || out.apply) || !out.members.length) {
+    fail("Usage: npm run import:legacy -- --data <old database folder> (--out <file.sql> | --apply) --member OLD=email [--member …] [--until YYYY-MM-DD]");
   }
   if (out.until && !/^\d{4}-\d{2}-\d{2}$/.test(out.until)) fail("--until takes a date, YYYY-MM-DD");
   for (const m of out.members) if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email)) fail(`"${m.email}" isn't an email address`);
@@ -293,95 +301,206 @@ for (const b of balances) {
 
 const emails = [...team.values()].map((m) => m.email);
 const pad = Math.max(...emails.map((e) => e.length));
-const lines: string[] = [];
-const emit = (line = "") => lines.push(line);
 
-emit("-- ===========================================================================");
-emit("-- Team Finance — history imported from the old finance system");
-emit("--");
-emit(`-- Written by scripts/import-legacy.mts on ${new Date().toISOString().slice(0, 10)}, from ${records.length} old records.`);
-emit("--");
-emit("-- Who (old user → Team Finance sign-in):");
-for (const [index, m] of team) emit(`--   ${m.old.username.padEnd(10)} #${index}  →  ${m.email}`);
-emit("--");
-emit(`-- What: ${txs.length} transactions with ${txs.reduce((n, t) => n + t.parts.length, 0)} shares —`);
-emit(`--   ${txs.filter((t) => t.initial).length} initial balances (dated ${initialDate}),`);
-emit(`--   ${txs.filter((t) => t.baseFee).length} base fees (the old "Net Fee"),`);
-emit(`--   ${txs.filter((t) => t.shared).length} costs shared with people outside this list (only their parts).`);
-emit(`-- Left out: ${skipped.others} records of other people only, ${skipped.deleted} deleted, ${skipped.zero} of $0` +
-  (args.until ? `, ${skipped.after} after ${args.until}.` : "."));
-emit("--");
-emit("-- Each person's balance after base fees, once imported — the same as the old system's:");
-for (const b of balances) emit(`--   ${b.email.padEnd(pad)}  ${dollars(b.imported).padStart(14)}`);
-emit("--");
-emit("-- BEFORE RUNNING: create every sign-in above in this team's Supabase project");
-emit("-- (SETUP.md, steps 4 and 8). Run this in THAT project's SQL editor.");
-emit("-- Safe to run again: it replaces its own earlier import, and nothing else.");
-emit("-- ===========================================================================");
-emit();
-emit("begin;");
-emit();
-emit("-- Everyone must have a sign-in and a member row first; their names come from there.");
-emit("do $$");
-emit("declare");
-emit("  missing text;");
-emit("begin");
-emit("  select string_agg(e, ', ') into missing");
-emit(`    from unnest(array[${emails.map(q).join(", ")}]) as e`);
-emit("   where not exists (select 1 from member m where lower(m.email) = e);");
-emit("  if missing is not null then");
-emit("    raise exception 'Add these people to the team first, then run this again: %', missing");
-emit("      using hint = 'The admin: Authentication → Users, then select finance_make_admin(email, name). Everyone else: the Members page.';");
-emit("  end if;");
-emit("end $$;");
-emit();
-emit("create temp table legacy_transaction (");
-emit("  id uuid, occurred_on date, direction text, amount numeric(14, 2), base_fee boolean,");
-emit("  reason text, created_by_email text, created_by_name text, created_at timestamptz");
-emit(") on commit drop;");
-emit("create temp table legacy_share (transaction_id uuid, email text, amount numeric(14, 2)) on commit drop;");
-emit();
-emit("insert into legacy_transaction values");
-txs.forEach((t, i) => {
-  const total = t.parts.reduce((s, p) => s + p.cents, ZERO);
-  emit(`  (${q(t.id)}, ${q(t.date)}, ${q(t.direction)}, ${sqlAmount(total)}, ${t.baseFee}, ${q(t.reason)}, ${q(t.createdByEmail)}, ${q(t.createdByName)}, ${q(t.createdAt)})${i < txs.length - 1 ? "," : ";"}`);
-});
-emit();
-emit("insert into legacy_share values");
-const shareRows = txs.flatMap((t) => t.parts.map((p) => `  (${q(t.id)}, ${q(team.get(p.index)!.email)}, ${sqlAmount(p.cents)})`));
-shareRows.forEach((row, i) => emit(`${row}${i < shareRows.length - 1 ? "," : ";"}`));
-emit();
-emit("-- An earlier run of this import, replaced rather than doubled (its shares go with it).");
-emit("delete from finance_transaction where id in (select id from legacy_transaction);");
-emit();
-emit("insert into finance_transaction (id, occurred_on, direction, amount, base_fee, reason, created_by, created_by_name, created_at)");
-emit("select t.id, t.occurred_on, t.direction, t.amount, t.base_fee, t.reason, m.id, coalesce(m.name, t.created_by_name), t.created_at");
-emit("  from legacy_transaction t");
-emit("  left join member m on lower(m.email) = t.created_by_email;");
-emit();
-emit("insert into finance_share (transaction_id, member_id, member_name, amount)");
-emit("select s.transaction_id, m.id, m.name, s.amount");
-emit("  from legacy_share s");
-emit("  join member m on lower(m.email) = s.email;");
-emit();
-emit("commit;");
-emit();
-emit("-- Check: each person's balance after base fees. Before anything else is");
-emit("-- recorded, these equal the figures at the top of this file.");
-emit("select m.name, m.email,");
-emit("       sum(case when t.direction = 'in' then s.amount else -s.amount end) as after_base_fees");
-emit("  from member m");
-emit("  join finance_share s on s.member_id = m.id");
-emit("  join finance_transaction t on t.id = s.transaction_id");
-emit(` where lower(m.email) in (${emails.map(q).join(", ")})`);
-emit(" group by m.name, m.email");
-emit(" order by m.name;");
-
-mkdirSync(dirname(args.out), { recursive: true });
-writeFileSync(args.out, `${lines.join("\n")}\n`);
-
-console.log(`✓ ${args.out}`);
-console.log(`  ${txs.length} transactions, ${txs.reduce((n, t) => n + t.parts.length, 0)} shares, from ${records.length} old records`);
+console.log(`${txs.length} transactions, ${txs.reduce((n, t) => n + t.parts.length, 0)} shares, from ${records.length} old records`);
 console.log(`  left out: ${skipped.others} other people's, ${skipped.deleted} deleted, ${skipped.zero} of $0${args.until ? `, ${skipped.after} after ${args.until}` : ""}`);
 console.log("  balance after base fees (matches the old system):");
 for (const b of balances) console.log(`    ${b.name.padEnd(10)} ${b.email.padEnd(pad)} ${dollars(b.imported).padStart(14)}`);
+
+if (args.out) {
+  const lines: string[] = [];
+  const emit = (line = "") => lines.push(line);
+
+  emit("-- ===========================================================================");
+  emit("-- Team Finance — history imported from the old finance system");
+  emit("--");
+  emit(`-- Written by scripts/import-legacy.mts on ${new Date().toISOString().slice(0, 10)}, from ${records.length} old records.`);
+  emit("--");
+  emit("-- Who (old user → Team Finance sign-in):");
+  for (const [index, m] of team) emit(`--   ${m.old.username.padEnd(10)} #${index}  →  ${m.email}`);
+  emit("--");
+  emit(`-- What: ${txs.length} transactions with ${txs.reduce((n, t) => n + t.parts.length, 0)} shares —`);
+  emit(`--   ${txs.filter((t) => t.initial).length} initial balances (dated ${initialDate}),`);
+  emit(`--   ${txs.filter((t) => t.baseFee).length} base fees (the old "Net Fee"),`);
+  emit(`--   ${txs.filter((t) => t.shared).length} costs shared with people outside this list (only their parts).`);
+  emit(`-- Left out: ${skipped.others} records of other people only, ${skipped.deleted} deleted, ${skipped.zero} of $0` +
+    (args.until ? `, ${skipped.after} after ${args.until}.` : "."));
+  emit("--");
+  emit("-- Each person's balance after base fees, once imported — the same as the old system's:");
+  for (const b of balances) emit(`--   ${b.email.padEnd(pad)}  ${dollars(b.imported).padStart(14)}`);
+  emit("--");
+  emit("-- BEFORE RUNNING: create every sign-in above in this team's Supabase project");
+  emit("-- (SETUP.md, steps 4 and 8). Run this in THAT project's SQL editor.");
+  emit("-- Safe to run again: it replaces its own earlier import, and nothing else.");
+  emit("-- ===========================================================================");
+  emit();
+  emit("begin;");
+  emit();
+  emit("-- Everyone must have a sign-in and a member row first; their names come from there.");
+  emit("do $$");
+  emit("declare");
+  emit("  missing text;");
+  emit("begin");
+  emit("  select string_agg(e, ', ') into missing");
+  emit(`    from unnest(array[${emails.map(q).join(", ")}]) as e`);
+  emit("   where not exists (select 1 from member m where lower(m.email) = e);");
+  emit("  if missing is not null then");
+  emit("    raise exception 'Add these people to the team first, then run this again: %', missing");
+  emit("      using hint = 'The admin: Authentication → Users, then select finance_make_admin(email, name). Everyone else: the Members page.';");
+  emit("  end if;");
+  emit("end $$;");
+  emit();
+  emit("create temp table legacy_transaction (");
+  emit("  id uuid, occurred_on date, direction text, amount numeric(14, 2), base_fee boolean,");
+  emit("  reason text, created_by_email text, created_by_name text, created_at timestamptz");
+  emit(") on commit drop;");
+  emit("create temp table legacy_share (transaction_id uuid, email text, amount numeric(14, 2)) on commit drop;");
+  emit();
+  emit("insert into legacy_transaction values");
+  txs.forEach((t, i) => {
+    const total = t.parts.reduce((s, p) => s + p.cents, ZERO);
+    emit(`  (${q(t.id)}, ${q(t.date)}, ${q(t.direction)}, ${sqlAmount(total)}, ${t.baseFee}, ${q(t.reason)}, ${q(t.createdByEmail)}, ${q(t.createdByName)}, ${q(t.createdAt)})${i < txs.length - 1 ? "," : ";"}`);
+  });
+  emit();
+  emit("insert into legacy_share values");
+  const shareRows = txs.flatMap((t) => t.parts.map((p) => `  (${q(t.id)}, ${q(team.get(p.index)!.email)}, ${sqlAmount(p.cents)})`));
+  shareRows.forEach((row, i) => emit(`${row}${i < shareRows.length - 1 ? "," : ";"}`));
+  emit();
+  emit("-- An earlier run of this import, replaced rather than doubled (its shares go with it).");
+  emit("delete from finance_transaction where id in (select id from legacy_transaction);");
+  emit();
+  emit("insert into finance_transaction (id, occurred_on, direction, amount, base_fee, reason, created_by, created_by_name, created_at)");
+  emit("select t.id, t.occurred_on, t.direction, t.amount, t.base_fee, t.reason, m.id, coalesce(m.name, t.created_by_name), t.created_at");
+  emit("  from legacy_transaction t");
+  emit("  left join member m on lower(m.email) = t.created_by_email;");
+  emit();
+  emit("insert into finance_share (transaction_id, member_id, member_name, amount)");
+  emit("select s.transaction_id, m.id, m.name, s.amount");
+  emit("  from legacy_share s");
+  emit("  join member m on lower(m.email) = s.email;");
+  emit();
+  emit("commit;");
+  emit();
+  emit("-- Check: each person's balance after base fees. Before anything else is");
+  emit("-- recorded, these equal the figures at the top of this file.");
+  emit("select m.name, m.email,");
+  emit("       sum(case when t.direction = 'in' then s.amount else -s.amount end) as after_base_fees");
+  emit("  from member m");
+  emit("  join finance_share s on s.member_id = m.id");
+  emit("  join finance_transaction t on t.id = s.transaction_id");
+  emit(` where lower(m.email) in (${emails.map(q).join(", ")})`);
+  emit(" group by m.name, m.email");
+  emit(" order by m.name;");
+
+  mkdirSync(dirname(args.out), { recursive: true });
+  writeFileSync(args.out, `${lines.join("\n")}\n`);
+
+  mkdirSync(dirname(args.out), { recursive: true });
+  writeFileSync(args.out, `${lines.join("\n")}\n`);
+  console.log(`✓ wrote ${args.out}`);
+}
+
+if (args.apply) await applyToDatabase();
+
+// ------------------------------------------------------------------ apply
+
+/**
+ * The same import as the SQL file, through Supabase's API with the service
+ * role: replace an earlier run's rows, insert the transactions, then their
+ * shares — undoing the transactions if the shares fail — and read the shares
+ * back to check every balance.
+ */
+async function applyToDatabase() {
+  // .env.local wins over .env, as in Next; neither overrides the shell.
+  for (const file of [".env.local", ".env"]) if (existsSync(file)) process.loadEnvFile(file);
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) fail("--apply needs NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local or .env");
+
+  const rest = async <T,>(path: string, init: { method?: string; body?: unknown; range?: string } = {}): Promise<T> => {
+    const response = await fetch(`${url}/rest/v1/${path}`, {
+      method: init.method ?? "GET",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+        ...(init.range ? { Range: init.range } : {}),
+      },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${init.method ?? "GET"} ${path.split("?")[0]} → ${response.status} ${text}`);
+    return (text ? JSON.parse(text) : null) as T;
+  };
+  const chunks = <T,>(list: T[], size = 100) =>
+    Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, (i + 1) * size));
+
+  const host = new URL(url).host;
+  console.log(`\napplying to ${host}`);
+
+  const members = await rest<Array<{ id: string; name: string; email: string }>>("member?select=id,name,email");
+  const byEmail = new Map(members.map((m) => [m.email.toLowerCase(), m]));
+  const missing = emails.filter((e) => !byEmail.has(e));
+  if (missing.length) fail(`Add these people to the team first (Members page), then run this again: ${missing.join(", ")}`);
+
+  const ids = txs.map((t) => t.id);
+  for (const part of chunks(ids)) await rest(`finance_transaction?id=in.(${part.join(",")})`, { method: "DELETE" });
+
+  await rest("finance_transaction", {
+    method: "POST",
+    body: txs.map((t) => {
+      const by = t.createdByEmail ? byEmail.get(t.createdByEmail) : undefined;
+      return {
+        id: t.id,
+        occurred_on: t.date,
+        direction: t.direction,
+        amount: sqlAmount(t.parts.reduce((s, p) => s + p.cents, ZERO)),
+        base_fee: t.baseFee,
+        reason: t.reason,
+        created_by: by?.id ?? null,
+        created_by_name: by?.name ?? t.createdByName,
+        created_at: t.createdAt,
+      };
+    }),
+  });
+  try {
+    await rest("finance_share", {
+      method: "POST",
+      body: txs.flatMap((t) =>
+        t.parts.map((p) => {
+          const m = byEmail.get(team.get(p.index)!.email)!;
+          return { transaction_id: t.id, member_id: m.id, member_name: m.name, amount: sqlAmount(p.cents) };
+        }),
+      ),
+    });
+  } catch (error) {
+    for (const part of chunks(ids)) await rest(`finance_transaction?id=in.(${part.join(",")})`, { method: "DELETE" });
+    fail(`The shares didn't save, so the transactions were taken back out: ${(error as Error).message}`);
+  }
+
+  // Read back exactly what was imported, and add it up per person.
+  const direction = new Map(txs.map((t) => [t.id, t.direction]));
+  const stored = new Map<string, bigint>();
+  let rows = 0;
+  for (const part of chunks(ids)) {
+    const shares = await rest<Array<{ transaction_id: string; member_id: string; amount: number | string }>>(
+      `finance_share?select=transaction_id,member_id,amount&transaction_id=in.(${part.join(",")})`,
+      { range: "0-9999" },
+    );
+    rows += shares.length;
+    for (const s of shares) {
+      const c = cents(s.amount);
+      stored.set(s.member_id, (stored.get(s.member_id) ?? ZERO) + (direction.get(s.transaction_id) === "in" ? c : -c));
+    }
+  }
+  const expectedRows = txs.reduce((n, t) => n + t.parts.length, 0);
+  let ok = rows === expectedRows;
+  console.log(`✓ ${txs.length} transactions and ${rows} shares in the database`);
+  for (const b of balances) {
+    const got = stored.get(byEmail.get(b.email)!.id) ?? ZERO;
+    ok &&= got === b.imported;
+    console.log(`    ${b.email.padEnd(pad)} ${dollars(got).padStart(14)}  ${got === b.imported ? "✓" : `✗ expected ${dollars(b.imported)}`}`);
+  }
+  if (!ok) fail("What's in the database doesn't match — check it before using the app.");
+}
