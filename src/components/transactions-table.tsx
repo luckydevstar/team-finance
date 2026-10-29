@@ -81,6 +81,13 @@ export function TransactionsTable({
                     Base fee
                   </Tag>
                 )}
+                {t.transfer && (
+                  <Tooltip title="Internal transfer — not counted in earnings">
+                    <Tag color="cyan" bordered={false}>
+                      Transfer
+                    </Tag>
+                  </Tooltip>
+                )}
               </Space>
             ),
           },

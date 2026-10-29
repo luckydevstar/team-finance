@@ -27,7 +27,7 @@ const CHART_HEIGHT = 320;
 const GAIN = "#4f46e5";
 const LOSS = "#dc2626";
 
-/** A member's month: their money in and out, base fees aside. */
+/** A member's month: their money in and out, base fees and transfers aside. */
 export type EarningsMember = { key: string; name: string; removed: boolean; in: number; out: number };
 
 const escape = (text: string) =>
@@ -60,7 +60,7 @@ function niceScale(low: number, high: number) {
 
 /**
  * Every member's earnings for one month, in one chart: a bar per member, the
- * month's in minus out with base fees not counted; hover for the in and out
+ * month's in minus out with base fees and transfers not counted; hover for the in and out
  * behind it. Months run from the 20th to the 19th; the switcher picks one.
  */
 export function MemberEarnings({ month, members }: { month: Month; members: EarningsMember[] }) {
@@ -150,7 +150,7 @@ export function MemberEarnings({ month, members }: { month: Month; members: Earn
     >
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
         <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-          In minus out, base fees not counted · hover a bar for its in and out
+          In minus out, base fees and transfers not counted · hover a bar for its in and out
         </Typography.Text>
         <span style={{ fontSize: 13 }}>
           <Typography.Text type="secondary">Everyone </Typography.Text>

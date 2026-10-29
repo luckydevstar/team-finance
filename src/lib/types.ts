@@ -13,6 +13,8 @@ export type Transaction = {
   /** The whole amount, before splitting; always positive. */
   amount: number;
   base_fee: boolean;
+  /** An internal transfer: money moved within the team, not earned or spent. Never also a base fee. */
+  transfer: boolean;
   reason: string | null;
   created_by: string | null;
   created_by_name: string | null;
@@ -26,10 +28,18 @@ export type Transaction = {
 };
 
 /**
- * The four figures, the same everywhere: money in and out with base fees
- * aside, the base fees, and net — in minus out, base fees left out.
+ * The figures, the same everywhere: money in and out with base fees and
+ * internal transfers aside, the base fees, the transfers in and out, and
+ * net — in minus out, base fees and transfers left out.
  */
-export type Totals = { total_in: number; total_out: number; base_fee: number; net: number };
+export type Totals = {
+  total_in: number;
+  total_out: number;
+  base_fee: number;
+  transfer_in: number;
+  transfer_out: number;
+  net: number;
+};
 
 /** A month's figures, from finance_month_totals(). `period` is its first day, e.g. 2026-11-01 for November. */
 export type MonthTotals = Totals & { period: string; starts_on: string; ends_on: string; transactions: number };

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 
 import { FinanceActions } from "@/components/finance-actions";
-import { Plain, Signed } from "@/components/figures";
+import { Plain, Signed, Transfers } from "@/components/figures";
 import { MemberName } from "@/components/member-avatar";
 import { MemberEarnings, type EarningsMember } from "@/components/member-earnings";
 import { money } from "@/lib/money";
@@ -25,7 +25,20 @@ type Props = {
   chartMembers: EarningsMember[];
 };
 
-/** In, out, base fees and net, for the months table. */
+/** Internal transfers: in less out, never counted anywhere else. */
+const transfersColumn = <T extends Totals>() => ({
+  title: (
+    <Tooltip title="Internal transfers, in less out — not counted in In, Out, Net or anyone's earnings; hover for both">
+      <span>Transfers</span>
+    </Tooltip>
+  ),
+  key: "transfers",
+  align: "right" as const,
+  sorter: (a: T, b: T) => a.transfer_in - a.transfer_out - (b.transfer_in - b.transfer_out),
+  render: (_: unknown, r: T) => <Transfers in={r.transfer_in} out={r.transfer_out} />,
+});
+
+/** In, out, base fees, transfers and net, for the months table. */
 const figureColumns = <T extends Totals>() => [
   {
     title: "In",
@@ -52,9 +65,10 @@ const figureColumns = <T extends Totals>() => [
     sorter: (a: T, b: T) => a.base_fee - b.base_fee,
     render: (v: number) => <Plain value={v} className="tw-fee" />,
   },
+  transfersColumn<T>(),
   {
     title: (
-      <Tooltip title="In minus out — base fees not counted">
+      <Tooltip title="In minus out — base fees and transfers not counted">
         <span>Net</span>
       </Tooltip>
     ),
@@ -86,7 +100,17 @@ export function Dashboard({ canWrite, setupError, members, months, memberTotals,
   const memberRows = useMemo(() => {
     const byId = new Map(memberTotals.filter((r) => r.member_id).map((r) => [r.member_id!, r]));
     const current: MemberTotals[] = members.map(
-      (m) => byId.get(m.id) ?? { member_id: m.id, member_name: m.name, total_in: 0, total_out: 0, base_fee: 0, net: 0 },
+      (m) =>
+        byId.get(m.id) ?? {
+          member_id: m.id,
+          member_name: m.name,
+          total_in: 0,
+          total_out: 0,
+          base_fee: 0,
+          transfer_in: 0,
+          transfer_out: 0,
+          net: 0,
+        },
     );
     const former = memberTotals.filter((r) => !r.member_id || !memberIds.has(r.member_id));
     return [...current, ...former];
@@ -136,7 +160,7 @@ export function Dashboard({ canWrite, setupError, members, months, memberTotals,
           size="middle"
           dataSource={months}
           pagination={months.length > 24 ? { pageSize: 24, showSizeChanger: false } : false}
-          scroll={{ x: 720 }}
+          scroll={{ x: 860 }}
           onRow={(m) => ({
             // period is the month's first day, 2026-11-01 — its key is 2026-11.
             onClick: () => router.push(`/transactions?m=${m.period.slice(0, 7)}`),
@@ -215,7 +239,7 @@ export function Dashboard({ canWrite, setupError, members, months, memberTotals,
             },
             {
               title: (
-                <Tooltip title="In minus out — base fees not taken off">
+                <Tooltip title="In minus out — base fees not taken off, transfers not counted">
                   <span>Before base fees</span>
                 </Tooltip>
               ),
@@ -226,7 +250,7 @@ export function Dashboard({ canWrite, setupError, members, months, memberTotals,
             },
             {
               title: (
-                <Tooltip title="In minus out, then minus their base fees">
+                <Tooltip title="In minus out, then minus their base fees — transfers not counted">
                   <span>After base fees</span>
                 </Tooltip>
               ),
@@ -241,6 +265,7 @@ export function Dashboard({ canWrite, setupError, members, months, memberTotals,
                 </Tooltip>
               ),
             },
+            transfersColumn<MemberTotals>(),
             { title: "", key: "go", width: 40, render: () => <RightOutlined style={{ color: "#cbd5e1" }} /> },
           ]}
         />

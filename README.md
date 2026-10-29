@@ -21,15 +21,21 @@ share.
 - **Base fees.** Money out can be marked as a base fee. It's kept apart: not
   in monthly in, out or net, shown on its own, and taken off only in a
   member's "after base fees" amount.
+- **Internal transfers.** Money in or out can be marked as an internal
+  transfer instead: money moved within the team, not earned or spent. It's
+  counted nowhere: not in monthly in, out or net, not in the chart, not
+  before or after base fees. Transfers show on their own (in less out, with
+  both on hover) and have their own filter. A transaction is a base fee or a
+  transfer, never both.
 - **Months run from the 20th to the 19th.** "November 2026" is Oct 20 –
   Nov 19: a payment on Oct 19 is October's, one on Oct 20 November's. The
   schema's `finance_period()` and `src/lib/month.ts` both define this, so
   change both if you change it.
 - **Dashboard** (`/`). Every member's earnings for a month you pick
   (`?m=2026-11`) in one bar chart: a bar per member, in − out with base fees
-  not counted; hovering shows the in and out. Then each month's in, out,
-  base fees and net, and each member's amount before and after their base
-  fees.
+  and transfers not counted; hovering shows the in and out. Then each
+  month's in, out, base fees, transfers and net, and each member's amount
+  before and after their base fees, and their transfers.
 - **Transactions** (`/transactions?m=2026-11`). One month: its money in,
   money out and net, and its transactions, filtered by type, member and
   text.
@@ -87,5 +93,5 @@ schema twice and asserts:
 - who may read and write
 - that a member sees only their own part
 - the 20th-to-19th months
-- base fees kept out of net
+- base fees and transfers kept out of net
 - history surviving a deactivated member or a deleted account

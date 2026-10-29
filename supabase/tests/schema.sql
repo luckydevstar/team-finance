@@ -230,7 +230,7 @@ end $$;
 reset role;
 
 \echo ''
-\echo '=== 5. totals: by month and by member, base fees kept out of net ==='
+\echo '=== 5. totals: by month and by member, base fees and transfers kept out of net ==='
 delete from finance_transaction;
 set role authenticated;
 set test.uid = '00000000-0000-0000-0000-0000000000a0';
@@ -246,26 +246,48 @@ select finance_save_transaction(null, '2026-11-02', 'out', 30, true, 'Base fee',
   array['00000000-0000-0000-0000-0000000000b1']::uuid[]) is not null as d \gset
 select finance_save_transaction(null, '2026-11-05', 'out', 20, false, 'Proxies',
   array['00000000-0000-0000-0000-0000000000b2']::uuid[]) is not null as e \gset
+-- Internal transfers: the admin hands Ana 200, and sends 50 out.
+select finance_save_transaction(null, '2026-11-03', 'in', 200, false, 'From the admin',
+  array['00000000-0000-0000-0000-0000000000b1']::uuid[], true) is not null as f \gset
+select finance_save_transaction(null, '2026-11-03', 'out', 50, false, 'Moved to savings',
+  array['00000000-0000-0000-0000-0000000000a0']::uuid[], true) is not null as g \gset
+
+do $$
+begin
+  perform finance_save_transaction(null, '2026-11-03', 'out', 10, true, null,
+    array['00000000-0000-0000-0000-0000000000b1']::uuid[], true);
+  raise exception 'FAIL: a base fee was also a transfer';
+exception
+  when check_violation then raise notice 'PASS: a transaction is a base fee or a transfer, not both';
+end $$;
 
 select 'October holds the initial data: in 500, out 80, net 420' as check,
        total_in = 500 and total_out = 80 and base_fee = 0 and net = 420 and transactions = 2
        and starts_on = '2026-09-20' and ends_on = '2026-10-19' as expect_true
   from finance_month_totals() where period = '2026-10-01';
-select 'November starts on the 20th: in 300, out 20, base fee 30 aside, net 280' as check,
-       total_in = 300 and total_out = 20 and base_fee = 30 and net = 280
+select 'November starts on the 20th: in 300, out 20, base fee 30 and transfers 200 in, 50 out aside, net 280' as check,
+       total_in = 300 and total_out = 20 and base_fee = 30 and transfer_in = 200 and transfer_out = 50 and net = 280
+       and transactions = 5
        and starts_on = '2026-10-20' and ends_on = '2026-11-19' as expect_true
   from finance_month_totals() where period = '2026-11-01';
 select 'months come newest first' as check,
        array_agg(period) = array['2026-11-01', '2026-10-01']::date[] as expect_true from finance_month_totals();
-select 'Ana across every month: in 800, out 40, base fee 30, net 760' as check,
-       total_in = 800 and total_out = 40 and base_fee = 30 and net = 760 as expect_true
+select 'Ana across every month: in 800, out 40, base fee 30, net 760 — the 200 transfer on its own' as check,
+       total_in = 800 and total_out = 40 and base_fee = 30 and transfer_in = 200 and transfer_out = 0 and net = 760 as expect_true
   from finance_member_totals() where member_name = 'Ana';
+select 'the admin''s transfer out costs them nothing' as check,
+       total_out = 0 and transfer_out = 50 and net = 0 as expect_true
+  from finance_member_totals() where member_name = 'Boss';
+select 'a member''s own transactions say which are transfers' as check,
+       (select bool_and(transfer) from finance_my_shares('2026-10-20', '2026-11-20')) as expect_true;
 select 'Ben: out 40 and 20, net −60' as check,
        total_in = 0 and total_out = 60 and net = -60 as expect_true
   from finance_member_totals() where member_name = 'Ben';
-select 'the chart: Ana in November is in 300, out 0 — the base fee left out' as check,
+select 'the chart: Ana in November is in 300, out 0 — the base fee and the transfer left out' as check,
        total_in = 300 and total_out = 0 as expect_true
   from finance_member_months() where member_name = 'Ana' and period = '2026-11-01';
+select 'the chart leaves transfers out: no bar for the admin' as check,
+       not exists (select 1 from finance_member_months() where member_name = 'Boss') as expect_true;
 reset role;
 
 \echo ''

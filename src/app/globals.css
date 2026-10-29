@@ -17,6 +17,7 @@
   --tw-in: #16a34a;
   --tw-out: #dc2626;
   --tw-fee: #d97706;
+  --tw-transfer: #0e7490;
 }
 
 html,
@@ -59,6 +60,10 @@ body {
 
 .tw-fee {
   color: var(--tw-fee);
+}
+
+.tw-transfer {
+  color: var(--tw-transfer);
 }
 
 .tw-zero {

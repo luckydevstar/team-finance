@@ -13,7 +13,9 @@
 --   finance_transaction  one entry as it was recorded: a date, money in or
 --                        out, the whole amount, why, and who recorded it.
 --                        Flagged `base_fee` for the special fee that is kept
---                        out of earnings.
+--                        out of earnings, or `transfer` for an internal
+--                        transfer — money moved within the team, which isn't
+--                        earned or spent at all.
 --   finance_share        each member's part of it. Several members on one
 --                        transaction split the amount equally, to the cent
 --                        (the odd cents go to the first few, so the parts
@@ -59,6 +61,9 @@ create table if not exists finance_transaction (
   amount          numeric(14, 2) not null check (amount > 0),
   -- A base fee is real money, but kept out of earnings: totals show it apart.
   base_fee        boolean not null default false,
+  -- An internal transfer, in or out: money moved within the team. Not
+  -- earnings, not a fee — totals show it apart and count it nowhere else.
+  transfer        boolean not null default false,
   reason          text check (reason is null or char_length(reason) <= 2000),
   created_by      uuid default auth.uid() references member (id) on delete set null,
   -- Kept, so the record still says who made it after the member is gone.
@@ -76,6 +81,11 @@ create table if not exists finance_share (
   amount         numeric(14, 2) not null check (amount > 0),
   unique (transaction_id, member_id)
 );
+
+-- Transfers came after the first version.
+alter table finance_transaction add column if not exists transfer boolean not null default false;
+alter table finance_transaction drop constraint if exists finance_transaction_one_kind;
+alter table finance_transaction add constraint finance_transaction_one_kind check (not (base_fee and transfer));
 
 create index if not exists finance_transaction_date_idx on finance_transaction (occurred_on desc, created_at desc);
 create index if not exists finance_share_transaction_idx on finance_share (transaction_id);
@@ -225,7 +235,12 @@ create policy finance_share_write on finance_share
  * SECURITY INVOKER: the write policies above decide, so only an admin gets
  * past the first insert. The amount is divided equally in cents; the
  * remainder goes one cent at a time to the first members, in the order given.
+ * A transaction is a base fee or an internal transfer (`p_transfer`), or
+ * neither — not both.
  */
+-- Before transfers. This one takes p_transfer last, with a default, so a
+-- caller that doesn't know about transfers still records ordinary ones.
+drop function if exists public.finance_save_transaction(uuid, date, text, numeric, boolean, text, uuid[]);
 create or replace function public.finance_save_transaction(
   p_id          uuid,
   p_occurred_on date,
@@ -233,7 +248,8 @@ create or replace function public.finance_save_transaction(
   p_amount      numeric,
   p_base_fee    boolean,
   p_reason      text,
-  p_members     uuid[]
+  p_members     uuid[],
+  p_transfer    boolean default false
 )
 returns uuid
 language plpgsql
@@ -260,6 +276,9 @@ begin
   end if;
   if coalesce(p_base_fee, false) and p_direction <> 'out' then
     raise exception using errcode = 'check_violation', message = 'Only money out can be a base fee.';
+  end if;
+  if coalesce(p_base_fee, false) and coalesce(p_transfer, false) then
+    raise exception using errcode = 'check_violation', message = 'A transaction is a base fee or an internal transfer, not both.';
   end if;
 
   -- Distinct, in the order given.
@@ -288,9 +307,9 @@ begin
   end if;
 
   if v_id is null then
-    insert into finance_transaction (occurred_on, direction, amount, base_fee, reason, created_by, created_by_name)
+    insert into finance_transaction (occurred_on, direction, amount, base_fee, transfer, reason, created_by, created_by_name)
     values (coalesce(p_occurred_on, current_date), p_direction, p_amount, coalesce(p_base_fee, false),
-            nullif(btrim(p_reason), ''), auth.uid(), finance_my_name())
+            coalesce(p_transfer, false), nullif(btrim(p_reason), ''), auth.uid(), finance_my_name())
     returning id into v_id;
   else
     update finance_transaction
@@ -298,6 +317,7 @@ begin
            direction   = p_direction,
            amount      = p_amount,
            base_fee    = coalesce(p_base_fee, false),
+           transfer    = coalesce(p_transfer, false),
            reason      = nullif(btrim(p_reason), ''),
            updated_at  = now()
      where id = v_id;
@@ -323,35 +343,43 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Reading
 --
--- The same four figures everywhere:
+-- The same figures everywhere:
 --
---   total_in   money in, base fees aside
---   total_out  money out, base fees aside
---   base_fee   base fees, as a positive amount
---   net        total_in − total_out: what was earned, base fees left out
+--   total_in      money in, base fees and transfers aside
+--   total_out     money out, base fees and transfers aside
+--   base_fee      base fees, as a positive amount
+--   transfer_in   internal transfers in, as a positive amount
+--   transfer_out  internal transfers out, as a positive amount
+--   net           total_in − total_out: what was earned, base fees and
+--                 transfers left out
 --
 -- For an admin, across everyone. For a member, across their own shares only
 -- — the same functions, so the pages ask one way and the database decides how
 -- much they get. SECURITY DEFINER for that choice; each checks
 -- finance_can_view() first, so a deactivated member gets nothing.
+--
+-- Transfers changed these functions' columns, which create or replace can't
+-- do, so each is dropped first.
 -- ---------------------------------------------------------------------------
 
 /** The shares the caller may count: everyone's for an admin, their own otherwise. */
-create or replace function public.finance_visible_shares()
+drop function if exists public.finance_visible_shares();
+create function public.finance_visible_shares()
 returns table (
   member_id   uuid,
   member_name text,
   amount      numeric,
   occurred_on date,
   direction   text,
-  base_fee    boolean
+  base_fee    boolean,
+  transfer    boolean
 )
 language sql
 stable
 security definer
 set search_path = public
 as $$
-  select s.member_id, s.member_name, s.amount, t.occurred_on, t.direction, t.base_fee
+  select s.member_id, s.member_name, s.amount, t.occurred_on, t.direction, t.base_fee, t.transfer
     from finance_share s
     join finance_transaction t on t.id = s.transaction_id
    where finance_can_view()
@@ -359,11 +387,12 @@ as $$
 $$;
 
 /**
- * Each month with any record, newest first: its range and its four figures.
+ * Each month with any record, newest first: its range and its figures.
  * An admin's are the whole team's, counted by transaction; a member's are
  * their own share of each.
  */
-create or replace function public.finance_month_totals()
+drop function if exists public.finance_month_totals();
+create function public.finance_month_totals()
 returns table (
   period       date,
   starts_on    date,
@@ -372,6 +401,8 @@ returns table (
   total_in     numeric,
   total_out    numeric,
   base_fee     numeric,
+  transfer_in  numeric,
+  transfer_out numeric,
   net          numeric
 )
 language sql
@@ -380,11 +411,11 @@ security definer
 set search_path = public
 as $$
   with rows as (
-    select t.occurred_on, t.direction, t.base_fee, t.amount
+    select t.occurred_on, t.direction, t.base_fee, t.transfer, t.amount
       from finance_transaction t
      where finance_is_admin()
     union all
-    select v.occurred_on, v.direction, v.base_fee, v.amount
+    select v.occurred_on, v.direction, v.base_fee, v.transfer, v.amount
       from finance_visible_shares() v
      where not finance_is_admin()
   )
@@ -392,24 +423,29 @@ as $$
          (finance_period(r.occurred_on) - interval '1 month')::date + 19 as starts_on,
          finance_period(r.occurred_on) + 18 as ends_on,
          count(*),
-         coalesce(sum(r.amount) filter (where r.direction = 'in' and not r.base_fee), 0),
-         coalesce(sum(r.amount) filter (where r.direction = 'out' and not r.base_fee), 0),
+         coalesce(sum(r.amount) filter (where r.direction = 'in' and not r.base_fee and not r.transfer), 0),
+         coalesce(sum(r.amount) filter (where r.direction = 'out' and not r.base_fee and not r.transfer), 0),
          coalesce(sum(r.amount) filter (where r.base_fee), 0),
-         coalesce(sum(case when r.direction = 'in' then r.amount else -r.amount end) filter (where not r.base_fee), 0)
+         coalesce(sum(r.amount) filter (where r.transfer and r.direction = 'in'), 0),
+         coalesce(sum(r.amount) filter (where r.transfer and r.direction = 'out'), 0),
+         coalesce(sum(case when r.direction = 'in' then r.amount else -r.amount end) filter (where not r.base_fee and not r.transfer), 0)
     from rows r
    group by 1
    order by 1 desc
 $$;
 
 /** Each member's figures across every month — every member for an admin, only themselves for a member. */
-create or replace function public.finance_member_totals()
+drop function if exists public.finance_member_totals();
+create function public.finance_member_totals()
 returns table (
-  member_id   uuid,
-  member_name text,
-  total_in    numeric,
-  total_out   numeric,
-  base_fee    numeric,
-  net         numeric
+  member_id    uuid,
+  member_name  text,
+  total_in     numeric,
+  total_out    numeric,
+  base_fee     numeric,
+  transfer_in  numeric,
+  transfer_out numeric,
+  net          numeric
 )
 language sql
 stable
@@ -418,17 +454,19 @@ set search_path = public
 as $$
   select v.member_id,
          coalesce(max(m.name), max(v.member_name)),
-         coalesce(sum(v.amount) filter (where v.direction = 'in' and not v.base_fee), 0),
-         coalesce(sum(v.amount) filter (where v.direction = 'out' and not v.base_fee), 0),
+         coalesce(sum(v.amount) filter (where v.direction = 'in' and not v.base_fee and not v.transfer), 0),
+         coalesce(sum(v.amount) filter (where v.direction = 'out' and not v.base_fee and not v.transfer), 0),
          coalesce(sum(v.amount) filter (where v.base_fee), 0),
-         coalesce(sum(case when v.direction = 'in' then v.amount else -v.amount end) filter (where not v.base_fee), 0)
+         coalesce(sum(v.amount) filter (where v.transfer and v.direction = 'in'), 0),
+         coalesce(sum(v.amount) filter (where v.transfer and v.direction = 'out'), 0),
+         coalesce(sum(case when v.direction = 'in' then v.amount else -v.amount end) filter (where not v.base_fee and not v.transfer), 0)
     from finance_visible_shares() v
     left join finance_members() m on m.id = v.member_id
    group by v.member_id, case when v.member_id is null then v.member_name end
    order by lower(coalesce(max(m.name), max(v.member_name)))
 $$;
 
-/** Each member's money in and out per month, base fees aside — for the dashboard's chart. */
+/** Each member's money in and out per month, base fees and transfers aside — for the dashboard's chart. */
 create or replace function public.finance_member_months()
 returns table (
   member_id   uuid,
@@ -449,22 +487,24 @@ as $$
          coalesce(sum(v.amount) filter (where v.direction = 'out'), 0)
     from finance_visible_shares() v
     left join finance_members() m on m.id = v.member_id
-   where not v.base_fee
+   where not v.base_fee and not v.transfer
    group by v.member_id, case when v.member_id is null then v.member_name end, finance_period(v.occurred_on)
 $$;
 
 /**
  * The caller's own transactions between two dates, as their share: the date,
- * in or out, base fee or not, why, who recorded it, their part, and how many
- * it was split between — never the whole amount or anyone else's part. For a
- * member's own view; an admin reads the tables themselves.
+ * in or out, base fee or transfer or neither, why, who recorded it, their
+ * part, and how many it was split between — never the whole amount or anyone
+ * else's part. For a member's own view; an admin reads the tables themselves.
  */
-create or replace function public.finance_my_shares(p_from date, p_to date)
+drop function if exists public.finance_my_shares(date, date);
+create function public.finance_my_shares(p_from date, p_to date)
 returns table (
   transaction_id  uuid,
   occurred_on     date,
   direction       text,
   base_fee        boolean,
+  transfer        boolean,
   reason          text,
   created_by_name text,
   created_at      timestamptz,
@@ -479,7 +519,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select t.id, t.occurred_on, t.direction, t.base_fee, t.reason, t.created_by_name, t.created_at,
+  select t.id, t.occurred_on, t.direction, t.base_fee, t.transfer, t.reason, t.created_by_name, t.created_at,
          s.id, s.member_id, s.member_name, s.amount,
          (select count(*)::integer from finance_share x where x.transaction_id = t.id)
     from finance_share s
@@ -531,7 +571,7 @@ begin
     'public.finance_can_view()',
     'public.finance_members()',
     'public.finance_my_name()',
-    'public.finance_save_transaction(uuid, date, text, numeric, boolean, text, uuid[])',
+    'public.finance_save_transaction(uuid, date, text, numeric, boolean, text, uuid[], boolean)',
     'public.finance_visible_shares()',
     'public.finance_month_totals()',
     'public.finance_member_totals()',

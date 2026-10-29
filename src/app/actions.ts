@@ -16,9 +16,10 @@ const transactionInput = z.object({
   direction: z.enum(["in", "out"]),
   amount: z.number().positive("Enter an amount above zero.").max(1_000_000_000),
   baseFee: z.boolean(),
+  transfer: z.boolean(),
   reason: z.string().max(2000, "The reason is too long."),
   members: z.array(z.string().regex(UUID)).min(1, "Choose at least one member.").max(500),
-});
+}).refine((t) => !(t.baseFee && t.transfer), "A transaction is a base fee or an internal transfer, not both.");
 
 /** Only an admin writes; the database says so too, this just says it first. */
 async function writer() {
@@ -46,6 +47,7 @@ export async function saveTransaction(input: z.input<typeof transactionInput>): 
     p_base_fee: t.baseFee,
     p_reason: t.reason,
     p_members: t.members,
+    p_transfer: t.transfer,
   });
   if (error) return { ok: false, error: error.message };
   // Both pages read these.

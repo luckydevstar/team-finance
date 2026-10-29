@@ -23,7 +23,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/">) {
   ]);
 
   // Every member today, then anyone with history who isn't one any more —
-  // their month's in and out, base fees aside.
+  // their month's in and out, base fees and transfers aside.
   const key = monthKey(month);
   const byKey = new Map(earnings.series.map((s) => [s.key, s]));
   const current = new Set(members.map((m) => m.id));

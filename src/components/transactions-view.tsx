@@ -13,7 +13,7 @@ import { money } from "@/lib/money";
 import { monthLabel, monthSpan, type Month } from "@/lib/month";
 import type { Member, Transaction } from "@/lib/types";
 
-type Kind = "all" | "in" | "out" | "fee";
+type Kind = "all" | "in" | "out" | "fee" | "transfer";
 
 type Props = {
   canWrite: boolean;
@@ -94,12 +94,13 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
     [transactions, member],
   );
 
-  /** The month's figures — the same rule as the dashboard: base fees aside, net is in minus out. */
+  /** The month's figures — the same rule as the dashboard: base fees and transfers aside, net is in minus out. */
   const totals = useMemo(() => {
-    const t = { in: 0, out: 0, fee: 0 };
+    const t = { in: 0, out: 0, fee: 0, transferIn: 0, transferOut: 0 };
     for (const tx of mine) {
       const amount = focus ? (shareOf(tx, focus)?.amount ?? 0) : tx.amount;
       if (tx.base_fee) t.fee += amount;
+      else if (tx.transfer) t[tx.direction === "in" ? "transferIn" : "transferOut"] += amount;
       else if (tx.direction === "in") t.in += amount;
       else t.out += amount;
     }
@@ -110,9 +111,11 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return mine.filter((t) => {
-      if (kind === "in" && (t.direction !== "in" || t.base_fee)) return false;
-      if (kind === "out" && (t.direction !== "out" || t.base_fee)) return false;
+      const counted = !t.base_fee && !t.transfer;
+      if (kind === "in" && (t.direction !== "in" || !counted)) return false;
+      if (kind === "out" && (t.direction !== "out" || !counted)) return false;
       if (kind === "fee" && !t.base_fee) return false;
+      if (kind === "transfer" && !t.transfer) return false;
       if (!q) return true;
       return (
         (t.reason ?? "").toLowerCase().includes(q) ||
@@ -164,7 +167,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
           <Figure
             label="In this month"
             value={money(totals.in)}
-            note="Base fees not counted"
+            note={totals.transferIn ? `Not counted: ${money(totals.transferIn)} in transfers` : "Internal transfers not counted"}
             icon={<ArrowDownOutlined />}
             tint="#dcfce7"
             ink="#15803d"
@@ -174,7 +177,16 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
           <Figure
             label="Out this month"
             value={money(totals.out)}
-            note={totals.fee ? `Base fees not counted (${money(totals.fee)} this month)` : "Base fees not counted"}
+            note={
+              totals.fee || totals.transferOut
+                ? `Not counted: ${[
+                    totals.fee && `${money(totals.fee)} in base fees`,
+                    totals.transferOut && `${money(totals.transferOut)} in transfers`,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")}`
+                : "Base fees and transfers not counted"
+            }
             icon={<ArrowUpOutlined />}
             tint="#fee2e2"
             ink="#b91c1c"
@@ -184,7 +196,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
           <Figure
             label="Net"
             value={<Signed value={totals.net} />}
-            note="In minus out — base fees not counted"
+            note="In minus out — base fees and transfers not counted"
             icon={<SwapOutlined />}
             tint="#eef2ff"
             ink="#4338ca"
@@ -214,6 +226,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
               { value: "in", label: "In" },
               { value: "out", label: "Out" },
               { value: "fee", label: "Base fees" },
+              { value: "transfer", label: "Transfers" },
             ]}
           />
           <Select

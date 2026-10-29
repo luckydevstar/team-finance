@@ -3,7 +3,7 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { App, Button, Checkbox, DatePicker, InputNumber, Input, Modal, Segmented, Select, Space, Tooltip, Typography } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { saveTransaction } from "@/app/actions";
 import { money, splitEvenly } from "@/lib/money";
@@ -16,12 +16,13 @@ type Draft = {
   amount: number | null;
   members: string[];
   baseFee: boolean;
+  transfer: boolean;
   reason: string;
 };
 
 export function draftFrom(transaction: Transaction | null, defaultDate: Dayjs): Draft {
   if (!transaction) {
-    return { id: null, date: defaultDate, direction: "out", amount: null, members: [], baseFee: false, reason: "" };
+    return { id: null, date: defaultDate, direction: "out", amount: null, members: [], baseFee: false, transfer: false, reason: "" };
   }
   return {
     id: transaction.id,
@@ -30,15 +31,54 @@ export function draftFrom(transaction: Transaction | null, defaultDate: Dayjs): 
     amount: transaction.amount,
     members: transaction.shares.map((s) => s.member_id).filter((id): id is string => Boolean(id)),
     baseFee: transaction.base_fee,
+    transfer: transaction.transfer,
     reason: transaction.reason ?? "",
   };
+}
+
+/** One of the special kinds a transaction can be marked as: a checkbox with what it means under it. */
+function KindOption({
+  checked,
+  disabled = false,
+  onChange,
+  title,
+  note,
+  edge,
+  tint,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+  title: string;
+  note: ReactNode;
+  edge: string;
+  tint: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "flex-start",
+        padding: "10px 12px",
+        borderRadius: 10,
+        border: `1px solid ${checked ? edge : "#e2e8f0"}`,
+        background: checked ? tint : "#fff",
+      }}
+    >
+      <Checkbox checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} style={{ marginTop: 1 }}>
+        <span style={{ fontWeight: 500 }}>{title}</span>
+        <div style={{ fontSize: 12, color: "#64748b" }}>{note}</div>
+      </Checkbox>
+    </div>
+  );
 }
 
 /**
  * Adding or editing a transaction: when, in or out, how much, for whom, and
  * why. Several members split the amount equally — the preview shows each
- * share before saving, to the cent. A base fee is marked here and kept out of
- * monthly earnings.
+ * share before saving, to the cent. A base fee or an internal transfer is
+ * marked here — one or the other — and kept out of monthly earnings.
  */
 export function TransactionDialog({
   open,
@@ -73,6 +113,7 @@ export function TransactionDialog({
       direction: draft.direction,
       amount: draft.amount,
       baseFee: draft.baseFee,
+      transfer: draft.transfer,
       reason: draft.reason,
       members: draft.members,
     });
@@ -216,30 +257,29 @@ export function TransactionDialog({
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "flex-start",
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: `1px solid ${draft.baseFee ? "#fcd34d" : "#e2e8f0"}`,
-            background: draft.baseFee ? "#fffbeb" : "#fff",
-          }}
-        >
-          <Checkbox
+        {/* One or the other, or neither: marking one unmarks the other. */}
+        <div style={{ display: "grid", gap: 8 }}>
+          <KindOption
             checked={draft.baseFee}
             disabled={draft.direction === "in"}
-            onChange={(e) => patch({ baseFee: e.target.checked })}
-            style={{ marginTop: 1 }}
-          >
-            <span style={{ fontWeight: 500 }}>Base fee</span>
-            <div style={{ fontSize: 12, color: "#64748b" }}>
-              {draft.direction === "in"
+            onChange={(baseFee) => patch(baseFee ? { baseFee, transfer: false } : { baseFee })}
+            title="Base fee"
+            note={
+              draft.direction === "in"
                 ? "Only money out can be a base fee."
-                : "A special fee: not counted in monthly in, out or net — taken off only in “after base fees”."}
-            </div>
-          </Checkbox>
+                : "A special fee: not counted in monthly in, out or net — taken off only in “after base fees”."
+            }
+            edge="#fcd34d"
+            tint="#fffbeb"
+          />
+          <KindOption
+            checked={draft.transfer}
+            onChange={(transfer) => patch(transfer ? { transfer, baseFee: false } : { transfer })}
+            title="Internal transfer"
+            note="Money moved within the team: not counted in monthly in, out or net, or in anyone's earnings — shown on its own."
+            edge="#67e8f9"
+            tint="#ecfeff"
+          />
         </div>
 
         <div>

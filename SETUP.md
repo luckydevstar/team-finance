@@ -295,6 +295,10 @@ People are never deleted from the app, so history always stays readable.
   - Tick **Base fee** for the special fee that shouldn't count in monthly
     earnings. It's shown separately and only taken off in a member's "after
     base fees" figure.
+  - Tick **Internal transfer** for money moved within the team, in or out.
+    It doesn't count anywhere: not in monthly in, out or net, not in the
+    chart, not in anyone's earnings. It's shown in its own Transfers column
+    and filter. A transaction can be a base fee or a transfer, not both.
 - **Months run from the 20th to the 19th.** "November" is Oct 20 – Nov 19:
   a payment on Oct 19 counts in October, one on Oct 20 in November.
   [Customising](#customising) explains how to change this.
