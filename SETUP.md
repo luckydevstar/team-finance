@@ -302,9 +302,16 @@ People are never deleted from the app, so history always stays readable.
 - **Months run from the 20th to the 19th.** "November" is Oct 20 – Nov 19:
   a payment on Oct 19 counts in October, one on Oct 20 in November.
   [Customising](#customising) explains how to change this.
-- **Starting balances.** There's no separate "opening balance". Enter what
-  each member starts with as ordinary transactions, dated in your first
-  month.
+- **Starting balances.** There's no separate "opening balance" per member.
+  Enter what each member starts with as ordinary transactions, dated in your
+  first month.
+- **The wallet.** All the money goes through one wallet. On the Dashboard,
+  under **Wallet**, click **Set starting balance**: pick the month it starts
+  (it begins on that month's first day, the 20th of the month before) and
+  enter what the wallet held then. From that day on, every transaction moves
+  it, base fees and transfers included. The Dashboard shows what it holds
+  now. The Transactions page shows what it held after each transaction and
+  at the month's end. Only admins see the wallet.
 - **Dashboard.** Shows a chart of every member's earnings for a month (in
   minus out, base fees not counted; hover a bar for its in and out), the
   totals by month, and each member's totals before and after base fees.

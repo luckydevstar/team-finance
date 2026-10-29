@@ -339,7 +339,51 @@ select 'once deactivated, Ana reads nothing — not even her own' as check,
 reset role;
 
 \echo ''
-\echo '=== 8. names: the schema creates exactly its three tables ==='
-select 'member, finance_transaction and finance_share — nothing else' as check,
-       array_agg(tablename::text order by tablename) = array['finance_share', 'finance_transaction', 'member'] as expect_true
+\echo '=== 8. names: the schema creates exactly its four tables ==='
+select 'member, finance_transaction, finance_share and finance_wallet — nothing else' as check,
+       array_agg(tablename::text order by tablename) = array['finance_share', 'finance_transaction', 'finance_wallet', 'member'] as expect_true
   from pg_tables where schemaname = 'public';
+
+\echo ''
+\echo '=== 9. the wallet: every transaction from its start, admins only ==='
+set role authenticated;
+set test.uid = '00000000-0000-0000-0000-0000000000a0';
+select 'no wallet until it is set' as check, (select count(*) from finance_wallet()) = 0 as expect_true;
+do $$
+begin
+  perform finance_set_wallet('2026-11-01', 1000);
+  raise exception 'FAIL: the wallet started mid-month';
+exception
+  when check_violation then raise notice 'PASS: the wallet starts on a 20th';
+end $$;
+select finance_set_wallet('2026-09-20', 5);
+-- November (from Oct 20), with 1000 in it. Setting it again replaces it.
+select finance_set_wallet('2026-10-20', 1000);
+select 'one wallet, signed by who set it' as check,
+       (select count(*) from finance_wallet) = 1
+       and (select updated_by_name from finance_wallet) = 'Boss' as expect_true;
+-- November: +300, −30 base fee, +200 and −50 transfers, −20 → +400. October's don't count.
+select 'it holds 1000 + 500 in − 100 out = 1400 — base fees and transfers count here' as check,
+       starts_on = '2026-10-20' and opening_balance = 1000 and total_in = 500 and total_out = 100 and balance = 1400 as expect_true
+  from finance_wallet();
+select 'up to its start, it holds what it started with' as check,
+       balance = 1000 as expect_true from finance_wallet('2026-10-20');
+select 'the balance after each, in the order they happened' as check,
+       array_agg(b.balance order by t.occurred_on, t.created_at) = array[1300, 1270, 1470, 1420, 1400]::numeric[] as expect_true
+  from finance_wallet_balances('2026-10-20', '2026-11-20') b
+  join finance_transaction t on t.id = b.transaction_id;
+select 'transactions before it starts have no balance' as check,
+       not exists (select 1 from finance_wallet_balances('2026-09-20', '2026-10-20')) as expect_true;
+set test.uid = '00000000-0000-0000-0000-0000000000b3';
+select 'a member sees no wallet' as check,
+       (select count(*) from finance_wallet()) = 0
+       and (select count(*) from finance_wallet_balances('2000-01-01', '2100-01-01')) = 0
+       and (select count(*) from finance_wallet) = 0 as expect_true;
+do $$
+begin
+  perform finance_set_wallet('2026-10-20', 1);
+  raise exception 'FAIL: a member set the wallet';
+exception
+  when insufficient_privilege then raise notice 'PASS: only an admin sets the wallet';
+end $$;
+reset role;

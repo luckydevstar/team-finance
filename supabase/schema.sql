@@ -20,6 +20,9 @@
 --                        transaction split the amount equally, to the cent
 --                        (the odd cents go to the first few, so the parts
 --                        always add up to the whole).
+--   finance_wallet       the team's one wallet, which every transaction
+--                        moves money in or out of: the month it starts and
+--                        the balance it held then. Admins only.
 --
 -- Months run from the 20th to the 19th: "November" is Oct 20 – Nov 19. See
 -- finance_period() — and src/lib/month.ts, which says the same.
@@ -33,6 +36,18 @@
 --
 --   select finance_make_admin('you@example.com', 'Your Name');
 -- ===========================================================================
+
+-- Team Finance gets a Supabase project of its own. Trueward's database has
+-- finance tables too, under the same names, so running this file there would
+-- swap Trueward's access rules for these and hide every transaction from
+-- everyone. Its `app_user` table gives it away; stop before changing anything.
+do $$
+begin
+  if to_regclass('public.app_user') is not null then
+    raise exception using message = 'This is the Trueward database, not Team Finance''s.',
+      hint = 'Run trueward-finance/supabase/schema.sql here, and this file in the Team Finance project.';
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Members
@@ -80,6 +95,20 @@ create table if not exists finance_share (
   member_name    text not null,
   amount         numeric(14, 2) not null check (amount > 0),
   unique (transaction_id, member_id)
+);
+
+/*
+ * One row, or none until an admin sets it. The wallet starts on a month's
+ * first day — a 20th — and every transaction from then on counts: money in
+ * adds, money out takes away, base fees and transfers too, since they're
+ * real money through it. Earlier transactions don't.
+ */
+create table if not exists finance_wallet (
+  id              boolean primary key default true check (id),
+  starts_on       date not null check (extract(day from starts_on) = 20),
+  opening_balance numeric(14, 2) not null check (opening_balance >= 0),
+  updated_by_name text,
+  updated_at      timestamptz not null default now()
 );
 
 -- Transfers came after the first version.
@@ -197,6 +226,7 @@ $$;
 alter table member enable row level security;
 alter table finance_transaction enable row level security;
 alter table finance_share enable row level security;
+alter table finance_wallet enable row level security;
 
 -- A member reads their own row; an admin reads everyone's. Changes go through
 -- the app's server with the service role (adding someone means creating
@@ -222,6 +252,11 @@ create policy finance_share_select on finance_share
 
 drop policy if exists finance_share_write on finance_share;
 create policy finance_share_write on finance_share
+  for all using (finance_is_admin()) with check (finance_is_admin());
+
+-- The wallet is the whole team's money, so it is for admins only.
+drop policy if exists finance_wallet_all on finance_wallet;
+create policy finance_wallet_all on finance_wallet
   for all using (finance_is_admin()) with check (finance_is_admin());
 
 -- ---------------------------------------------------------------------------
@@ -337,6 +372,37 @@ begin
   end loop;
 
   return v_id;
+end;
+$$;
+
+/**
+ * Sets where the wallet starts — a month's first day, the 20th — and the
+ * balance it held then. SECURITY INVOKER: the wallet's policy decides, so
+ * admins only.
+ */
+create or replace function public.finance_set_wallet(p_starts_on date, p_opening_balance numeric)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  if not finance_is_admin() then
+    raise exception using errcode = 'insufficient_privilege', message = 'Only an admin sets the wallet.';
+  end if;
+  if p_starts_on is null or extract(day from p_starts_on) <> 20 then
+    raise exception using errcode = 'check_violation', message = 'The wallet starts on a month''s first day, the 20th.';
+  end if;
+  if p_opening_balance is null or p_opening_balance < 0 or p_opening_balance <> round(p_opening_balance, 2) then
+    raise exception using errcode = 'check_violation', message = 'The starting balance must be zero or more, to the cent.';
+  end if;
+  insert into finance_wallet (id, starts_on, opening_balance, updated_by_name, updated_at)
+  values (true, p_starts_on, p_opening_balance, finance_my_name(), now())
+  on conflict (id) do update
+    set starts_on       = excluded.starts_on,
+        opening_balance = excluded.opening_balance,
+        updated_by_name = excluded.updated_by_name,
+        updated_at      = excluded.updated_at;
 end;
 $$;
 
@@ -531,6 +597,71 @@ as $$
    order by t.occurred_on desc, t.created_at desc
 $$;
 
+/**
+ * The wallet: where it starts, the balance then, all the money in and out
+ * since — every transaction, base fees and transfers too — and what it holds
+ * now. Up to `p_until` (not included) when given, for a month's closing
+ * balance. No row until it's set, and none for anyone but an admin:
+ * SECURITY INVOKER, so the policies on the wallet and the transactions decide.
+ */
+create or replace function public.finance_wallet(p_until date default null)
+returns table (
+  starts_on       date,
+  opening_balance numeric,
+  total_in        numeric,
+  total_out       numeric,
+  balance         numeric,
+  updated_by_name text,
+  updated_at      timestamptz
+)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select w.starts_on,
+         w.opening_balance,
+         coalesce(sum(t.amount) filter (where t.direction = 'in'), 0),
+         coalesce(sum(t.amount) filter (where t.direction = 'out'), 0),
+         w.opening_balance + coalesce(sum(case when t.direction = 'in' then t.amount else -t.amount end), 0),
+         w.updated_by_name,
+         w.updated_at
+    from finance_wallet w
+    left join finance_transaction t
+      on t.occurred_on >= w.starts_on
+     and (p_until is null or t.occurred_on < p_until)
+   where finance_is_admin()
+   group by w.id
+$$;
+
+/**
+ * What the wallet held right after each transaction between two dates, in
+ * the order they happened: by date, then by when they were recorded — the
+ * order the transactions page lists them in, newest first. Transactions from
+ * before the wallet starts have none. Admins only.
+ */
+create or replace function public.finance_wallet_balances(p_from date, p_to date)
+returns table (transaction_id uuid, balance numeric)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select r.id, r.balance
+    from (
+      select t.id,
+             t.occurred_on,
+             w.opening_balance
+               + sum(case when t.direction = 'in' then t.amount else -t.amount end)
+                   over (order by t.occurred_on, t.created_at, t.id) as balance
+        from finance_transaction t
+        join finance_wallet w on t.occurred_on >= w.starts_on
+       where finance_is_admin()
+    ) r
+   where r.occurred_on >= p_from
+     and r.occurred_on < p_to
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Grants
 --
@@ -551,14 +682,14 @@ do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     grant usage on schema public to authenticated;
-    grant select, insert, update, delete on member, finance_transaction, finance_share to authenticated;
+    grant select, insert, update, delete on member, finance_transaction, finance_share, finance_wallet to authenticated;
   end if;
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     grant usage on schema public to service_role;
-    grant select, insert, update, delete on member, finance_transaction, finance_share to service_role;
+    grant select, insert, update, delete on member, finance_transaction, finance_share, finance_wallet to service_role;
   end if;
   if exists (select 1 from pg_roles where rolname = 'anon') then
-    revoke all on member, finance_transaction, finance_share from anon;
+    revoke all on member, finance_transaction, finance_share, finance_wallet from anon;
   end if;
 end $$;
 
@@ -576,7 +707,10 @@ begin
     'public.finance_month_totals()',
     'public.finance_member_totals()',
     'public.finance_member_months()',
-    'public.finance_my_shares(date, date)'
+    'public.finance_my_shares(date, date)',
+    'public.finance_set_wallet(date, numeric)',
+    'public.finance_wallet(date)',
+    'public.finance_wallet_balances(date, date)'
   ] loop
     execute format('revoke all on function %s from public', fn);
     if exists (select 1 from pg_roles where rolname = 'anon') then

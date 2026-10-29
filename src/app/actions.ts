@@ -21,6 +21,11 @@ const transactionInput = z.object({
   members: z.array(z.string().regex(UUID)).min(1, "Choose at least one member.").max(500),
 }).refine((t) => !(t.baseFee && t.transfer), "A transaction is a base fee or an internal transfer, not both.");
 
+const walletInput = z.object({
+  startsOn: z.string().regex(DAY, "Pick the month it starts."),
+  openingBalance: z.number().min(0, "The starting balance can't be below zero.").max(1_000_000_000),
+});
+
 /** Only an admin writes; the database says so too, this just says it first. */
 async function writer() {
   const viewer = await currentViewer();
@@ -63,6 +68,26 @@ export async function deleteTransaction(id: string): Promise<Result> {
   if (error) return { ok: false, error: error.message };
   if (!data?.length) return { ok: false, error: "That transaction is already gone." };
   // Both pages read these.
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * Sets where the wallet starts — a month's first day, the 20th — and what it
+ * held then. Every transaction from that day on moves it.
+ */
+export async function saveWallet(input: z.input<typeof walletInput>): Promise<Result> {
+  if (!(await writer())) return { ok: false, error: "Only an admin sets the wallet." };
+  const parsed = walletInput.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the form." };
+
+  const db = await createClient();
+  const { error } = await db.rpc("finance_set_wallet", {
+    p_starts_on: parsed.data.startsOn,
+    p_opening_balance: Math.round(parsed.data.openingBalance * 100) / 100,
+  });
+  if (error) return { ok: false, error: error.message };
+  // Both pages read it.
   revalidatePath("/", "layout");
   return { ok: true };
 }

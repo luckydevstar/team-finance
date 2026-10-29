@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownOutlined, ArrowUpOutlined, SearchOutlined, SwapOutlined } from "@ant-design/icons";
+import { ArrowDownOutlined, ArrowUpOutlined, SearchOutlined, SwapOutlined, WalletOutlined } from "@ant-design/icons";
 import { Alert, Card, Col, Input, Row, Segmented, Select, Typography } from "antd";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, type ReactNode } from "react";
@@ -9,9 +9,10 @@ import { FinanceActions } from "@/components/finance-actions";
 import { Signed } from "@/components/figures";
 import { MonthSwitcher } from "@/components/month-switcher";
 import { shareOf, TransactionsTable, type Focus } from "@/components/transactions-table";
+import { Balance } from "@/components/wallet";
 import { money } from "@/lib/money";
-import { monthLabel, monthSpan, type Month } from "@/lib/month";
-import type { Member, Transaction } from "@/lib/types";
+import { currentMonth, monthKey, monthLabel, monthOf, monthRange, monthSpan, type Month } from "@/lib/month";
+import type { Member, Transaction, Wallet } from "@/lib/types";
 
 type Kind = "all" | "in" | "out" | "fee" | "transfer";
 
@@ -23,6 +24,8 @@ type Props = {
   transactions: Transaction[];
   /** `?member=` — an account id, or `name:…` for one that's gone. */
   member: string | null;
+  /** An admin's: the wallet as it stood at the month's end, or null until it's set. */
+  wallet: Wallet | null;
 };
 
 function Figure({ label, value, note, icon, tint, ink }: { label: string; value: ReactNode; note?: ReactNode; icon: ReactNode; tint: string; ink: string }) {
@@ -50,10 +53,12 @@ function Figure({ label, value, note, icon, tint, ink }: { label: string; value:
 
 /**
  * A month's transactions — months run from the 20th to the 19th — with the
- * month's money in, money out and net at the top. Filter by type, member and
- * text; narrowed to one member, the figures and amounts are their share.
+ * month's money in, money out and net at the top, and for an admin what
+ * the wallet held at its end and after each transaction. Filter by
+ * type, member and text; narrowed to one member, the figures and amounts are
+ * their share — the wallet stays the whole team's.
  */
-export function TransactionsView({ canWrite, month, setupError, members, transactions, member }: Props) {
+export function TransactionsView({ canWrite, month, setupError, members, transactions, member, wallet }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -107,6 +112,11 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
     return { ...t, net: t.in - t.out };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mine, member]);
+
+  // The wallet means nothing for a month that ended before it started.
+  const walletStarted = wallet !== null && monthRange(month).to > wallet.starts_on;
+  const isThisMonth = monthKey(month) === monthKey(currentMonth());
+  const figureSpan = canWrite ? { xs: 24, sm: 12, xl: 6 } : { xs: 24, sm: 8 };
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -163,7 +173,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
       )}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} sm={8}>
+        <Col {...figureSpan}>
           <Figure
             label="In this month"
             value={money(totals.in)}
@@ -173,7 +183,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
             ink="#15803d"
           />
         </Col>
-        <Col xs={24} sm={8}>
+        <Col {...figureSpan}>
           <Figure
             label="Out this month"
             value={money(totals.out)}
@@ -192,7 +202,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
             ink="#b91c1c"
           />
         </Col>
-        <Col xs={24} sm={8}>
+        <Col {...figureSpan}>
           <Figure
             label="Net"
             value={<Signed value={totals.net} />}
@@ -202,6 +212,24 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
             ink="#4338ca"
           />
         </Col>
+        {canWrite && (
+          <Col {...figureSpan}>
+            <Figure
+              label={isThisMonth ? "Wallet now" : "Wallet at month's end"}
+              value={walletStarted ? <Balance value={wallet.balance} /> : "—"}
+              note={
+                !wallet
+                  ? "Set its starting balance on the dashboard"
+                  : !walletStarted
+                    ? `Starts in ${monthLabel(monthOf(wallet.starts_on))}`
+                    : "Every transaction counts — base fees and transfers too"
+              }
+              icon={<WalletOutlined />}
+              tint="#f1f5f9"
+              ink="#334155"
+            />
+          </Col>
+        )}
       </Row>
 
       <Card
@@ -252,6 +280,7 @@ export function TransactionsView({ canWrite, month, setupError, members, transac
           transactions={shown}
           members={members}
           canWrite={canWrite}
+          showWallet={canWrite}
           focus={focus}
           empty={mine.length ? "Nothing matches these filters." : `No transactions in ${monthLabel(month)}.`}
         />

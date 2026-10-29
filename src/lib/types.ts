@@ -25,6 +25,8 @@ export type Transaction = {
    * the only one they get, and `amount` is that share, not the whole.
    */
   split?: number;
+  /** For an admin: what the wallet held right after this one — null from before the wallet starts. */
+  wallet_after?: number | null;
 };
 
 /**
@@ -46,3 +48,18 @@ export type MonthTotals = Totals & { period: string; starts_on: string; ends_on:
 
 /** A member's figures across every month, from finance_member_totals(). */
 export type MemberTotals = Totals & { member_id: string | null; member_name: string };
+
+/**
+ * The team's wallet, from finance_wallet(): the day it starts (a month's
+ * first day, the 20th), what it held then, every transaction's money in and
+ * out since, and what it holds. Admins only.
+ */
+export type Wallet = {
+  starts_on: string;
+  opening_balance: number;
+  total_in: number;
+  total_out: number;
+  balance: number;
+  updated_by_name: string | null;
+  updated_at: string;
+};

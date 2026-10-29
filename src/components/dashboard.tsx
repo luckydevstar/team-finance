@@ -9,9 +9,10 @@ import { FinanceActions } from "@/components/finance-actions";
 import { Plain, Signed, Transfers } from "@/components/figures";
 import { MemberName } from "@/components/member-avatar";
 import { MemberEarnings, type EarningsMember } from "@/components/member-earnings";
+import { WalletCard } from "@/components/wallet";
 import { money } from "@/lib/money";
 import { currentMonth, monthKey, monthLabel, monthSpan, type Month } from "@/lib/month";
-import type { Member, MemberTotals, MonthTotals, Totals } from "@/lib/types";
+import type { Member, MemberTotals, MonthTotals, Totals, Wallet } from "@/lib/types";
 
 type Props = {
   canWrite: boolean;
@@ -23,6 +24,8 @@ type Props = {
   /** The chart's month, and each member's in and out for it. */
   chartMonth: Month;
   chartMembers: EarningsMember[];
+  /** An admin's: the team's wallet, or null until it's set. */
+  wallet: Wallet | null;
 };
 
 /** Internal transfers: in less out, never counted anywhere else. */
@@ -80,12 +83,13 @@ const figureColumns = <T extends Totals>() => [
 ];
 
 /**
- * The dashboard: everything so far. Every member's earnings for a chosen
+ * The dashboard: everything so far. For an admin, the wallet first.
+ * Every member's earnings for a chosen
  * month in one chart, each month's figures — months run from the 20th to the 19th — and
  * what each member comes to, before and after their base fees. A month
  * opens its transactions; so does a member, for the current month.
  */
-export function Dashboard({ canWrite, setupError, members, months, memberTotals, chartMonth, chartMembers }: Props) {
+export function Dashboard({ canWrite, setupError, members, months, memberTotals, chartMonth, chartMembers, wallet }: Props) {
   const router = useRouter();
   const now = currentMonth();
 
@@ -151,6 +155,8 @@ export function Dashboard({ canWrite, setupError, members, months, memberTotals,
           description="Run supabase/schema.sql in the Supabase SQL editor, then reload."
         />
       )}
+
+      {canWrite && <WalletCard wallet={wallet} />}
 
       <MemberEarnings month={chartMonth} members={chartMembers} />
 

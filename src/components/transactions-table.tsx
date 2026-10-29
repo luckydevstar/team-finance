@@ -10,6 +10,7 @@ import { deleteTransaction } from "@/app/actions";
 import { Signed } from "@/components/figures";
 import { MemberAvatar, MemberName } from "@/components/member-avatar";
 import { draftFrom, TransactionDialog } from "@/components/transaction-dialog";
+import { Balance } from "@/components/wallet";
 import { money } from "@/lib/money";
 import type { Member, Share, Transaction } from "@/lib/types";
 
@@ -22,18 +23,20 @@ export const shareOf = (t: Transaction, focus: Focus): Share | undefined =>
 /**
  * Transactions as a table, for the history page. An admin edits and
  * removes from here. With a `focus`, amounts are that member's share, "of"
- * the whole.
+ * the whole. `showWallet` adds what the wallet held after each.
  */
 export function TransactionsTable({
   transactions,
   members,
   canWrite,
+  showWallet = false,
   focus = null,
   empty,
 }: {
   transactions: Transaction[];
   members: Member[];
   canWrite: boolean;
+  showWallet?: boolean;
   focus?: Focus;
   empty: ReactNode;
 }) {
@@ -55,7 +58,7 @@ export function TransactionsTable({
         size="middle"
         dataSource={transactions}
         pagination={transactions.length > 50 ? { pageSize: 50, showSizeChanger: false } : false}
-        scroll={{ x: 980 }}
+        scroll={{ x: showWallet ? 1120 : 980 }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={empty} /> }}
         columns={[
           {
@@ -118,6 +121,28 @@ export function TransactionsTable({
               );
             },
           },
+          ...(showWallet
+            ? [
+                {
+                  title: (
+                    <Tooltip title="What the wallet held right after each — every transaction counts, whoever it's for">
+                      <span>Wallet after</span>
+                    </Tooltip>
+                  ),
+                  key: "wallet",
+                  align: "right" as const,
+                  width: 140,
+                  render: (_: unknown, t: Transaction) =>
+                    t.wallet_after == null ? (
+                      <Tooltip title="From before the wallet starts">
+                        <span className="tw-num tw-zero">—</span>
+                      </Tooltip>
+                    ) : (
+                      <Balance value={t.wallet_after} />
+                    ),
+                },
+              ]
+            : []),
           {
             title: "Members",
             key: "members",

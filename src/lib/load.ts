@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import type { Member, MemberTotals, MonthTotals, Totals, Transaction } from "@/lib/types";
+import type { Member, MemberTotals, MonthTotals, Totals, Transaction, Wallet } from "@/lib/types";
 
 /*
  * The reads the pages make, as the signed-in user — the policies in
@@ -116,4 +116,35 @@ export async function loadMyTransactions(from: string, to: string): Promise<{ tr
       split: r.split,
     })),
   };
+}
+
+/**
+ * The wallet, with everything recorded — or only up to `until` (not
+ * included), for a month's closing balance. Null until it's set, and for
+ * anyone but an admin.
+ */
+export async function loadWallet(until?: string): Promise<{ wallet: Wallet | null; error: unknown }> {
+  const db = await createClient();
+  const { data, error } = await db.rpc("finance_wallet", until ? { p_until: until } : {});
+  const row = ((data ?? []) as Wallet[])[0];
+  return {
+    error,
+    wallet: row
+      ? {
+          ...row,
+          opening_balance: num(row.opening_balance),
+          total_in: num(row.total_in),
+          total_out: num(row.total_out),
+          balance: num(row.balance),
+        }
+      : null,
+  };
+}
+
+/** What the wallet held right after each transaction between two dates, by transaction id. */
+export async function loadWalletBalances(from: string, to: string): Promise<{ balances: Map<string, number>; error: unknown }> {
+  const db = await createClient();
+  const { data, error } = await db.rpc("finance_wallet_balances", { p_from: from, p_to: to });
+  type Row = { transaction_id: string; balance: unknown };
+  return { error, balances: new Map(((data ?? []) as Row[]).map((r) => [r.transaction_id, num(r.balance)])) };
 }

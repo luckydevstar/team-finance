@@ -27,6 +27,13 @@ share.
   before or after base fees. Transfers show on their own (in less out, with
   both on hover) and have their own filter. A transaction is a base fee or a
   transfer, never both.
+- **Wallet.** All the money goes through one wallet. On the dashboard an
+  admin sets the month it starts (from that month's first day, the 20th of
+  the month before) and what it held then. From that day on every
+  transaction moves it — money in adds, money out takes away, base fees and
+  transfers too, since they're real money through it; earlier ones don't
+  count. The dashboard shows what it holds now; the transactions page what
+  it held after each transaction and at the month's end. Admins only.
 - **Months run from the 20th to the 19th.** "November 2026" is Oct 20 –
   Nov 19: a payment on Oct 19 is October's, one on Oct 20 November's. The
   schema's `finance_period()` and `src/lib/month.ts` both define this, so
@@ -44,7 +51,7 @@ share.
 
 | | sees | records, edits, removes |
 | --- | --- | --- |
-| admin | everything: every transaction whole, every member's figures | transactions and members |
+| admin | everything: every transaction whole, every member's figures, the wallet | transactions, members and the wallet |
 | member | **only their own part**: their share of each transaction (with how many it was split between), their own monthly figures, their own bar in the chart | nothing |
 | deactivated, or not a member | nothing | nothing |
 
@@ -94,4 +101,5 @@ schema twice and asserts:
 - that a member sees only their own part
 - the 20th-to-19th months
 - base fees and transfers kept out of net
+- the wallet's balance after each transaction, and that only admins see it
 - history surviving a deactivated member or a deleted account
